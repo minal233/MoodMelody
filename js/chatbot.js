@@ -1,5 +1,5 @@
 const Chatbot = {
-    GEMINI_API_KEY: 'AIzaSyBRckKXzvKlcwTktPB26CXWsrmUTPkck6o',
+    GEMINI_API_KEY: 'API_Key',
     moodKeywords: {
         happy: ['happy', 'good', 'excited', 'joyful', 'cheerful', 'glad', 'thrilled', 'delighted', 'content'],
         sad: ['sad', 'depressed', 'down', 'melancholy', 'blue', 'gloomy', 'miserable', 'heartbroken'],
