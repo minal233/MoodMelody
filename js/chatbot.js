@@ -1,122 +1,94 @@
+// js/chatbot.js
 const Chatbot = {
-    GEMINI_API_KEY: 'API_Key',
-    moodKeywords: {
-        happy: ['happy', 'good', 'excited', 'joyful', 'cheerful', 'glad', 'thrilled', 'delighted', 'content'],
-        sad: ['sad', 'depressed', 'down', 'melancholy', 'blue', 'gloomy', 'miserable', 'heartbroken'],
-        relaxed: ['relaxed', 'calm', 'peaceful', 'chill', 'serene', 'tranquil', 'rested'],
-        angry: ['angry', 'frustrated', 'upset', 'irritated', 'mad', 'annoyed', 'furious', 'enraged'],
-        anxious: ['anxious', 'nervous', 'worried', 'stressed', 'tense', 'uneasy', 'overwhelmed'],
-        amazed: ['amazed', 'astonished', 'stunned', 'shocked', 'awe', 'wonder', 'incredible'],
-        surprised: ['surprised', 'shocked', 'startled', 'taken aback', 'unexpected'],
-        energetic: ['energetic', 'dancing', 'lively', 'vibrant', 'active', 'upbeat', 'pumped'],
-        nostalgic: ['nostalgic', 'memories', 'old times', 'sentimental', 'throwback', 'reminiscing'],
-        romantic: ['romantic', 'love', 'in love', 'affectionate', 'passionate', 'sweet']
-    },
-    welcomeMessageAdded: false,
-    currentMood: null,
-    awaitingConfirmation: false,
+  // Enhanced mood detection using VADER + keyword boosting
+  detectMood(text) {
+    const analyzer = new vader.SentimentIntensityAnalyzer();
+    const scores = analyzer.polarity_scores(text.toLowerCase());
 
-    async init() {
-        if (!this.welcomeMessageAdded) {
-            const messages = document.getElementById('chat-messages');
-            messages.innerHTML = '';
-            UI.addBotMessage('Hi there! I\'m your MoodMelody assistant. How are you feeling today? I can recommend music based on your mood!');
-            this.welcomeMessageAdded = true;
-        }
-    },
+    const compound = scores.compound; // -1 (very negative) to +1 (very positive)
+    const positive = scores.pos;
+    const negative = scores.neg;
+    const neutral = scores.neu;
 
-    async processUserInput(input) {
-        UI.showLoading(true);
-        const lowerInput = input.toLowerCase();
+    // Keyword boosts for better accuracy
+    const lower = text.toLowerCase();
+    const keywords = {
+      happy: ["happy", "joy", "great", "amazing", "love", "excited", "yay", "woohoo", "awesome"],
+      sad: ["sad", "depressed", "lonely", "cry", "hurt", "down", "bad day", "miss"],
+      calm: ["calm", "peaceful", "relax", "chill", "zen", "serene", "meditate", "breathe"],
+      angry: ["angry", "mad", "hate", "annoyed", "frustrated", "pissed", "rage"],
+      energetic: ["energy", "pumped", "dance", "party", "workout", "run", "hype", "let's go"],
+      romantic: ["love", "crush", "date", "kiss", "heart", "baby", "sweet", "darling"],
+      nostalgic: ["remember", "old times", "miss you", "childhood", "back then", "memories"],
+      anxious: ["anxious", "worry", "stress", "nervous", "scared", "panic", "afraid"]
+    };
 
-        if (this.awaitingConfirmation && ['ok', 'yes', 'sure', 'great'].includes(lowerInput)) {
-            if (this.currentMood) {
-                const tokens = Storage.getTokens();
-                if (tokens && tokens.access_token) {
-                    const tracks = await Spotify.searchTracks(tokens.access_token, this.currentMood, this.currentMood);
-                    console.log('Tracks received:', tracks); // Debug log
-                    if (tracks && tracks.tracks && tracks.tracks.items && tracks.tracks.items.length > 0) {
-                        console.log('Showing recommendations:', tracks.tracks.items); // Debug log
-                        UI.showRecommendations(tracks.tracks.items, this.currentMood);
-                        Storage.saveMoodHistory({
-                            mood: this.currentMood,
-                            input,
-                            tracks: tracks.tracks.items,
-                            timestamp: new Date().toISOString(),
-                        });
-                    } else {
-                        console.log('No tracks found in response:', tracks);
-                        UI.addBotMessage("I couldn't find any tracks for that mood. Let's try something else! How are you feeling now?");
-                    }
-                } else {
-                    UI.addBotMessage("Please connect to Spotify to get music recommendations!");
-                }
-                this.awaitingConfirmation = false;
-            }
-        } else {
-            const mood = this.detectMood(lowerInput);
-            if (mood) {
-                this.currentMood = mood;
-                const botResponse = await this.getGeminiResponse(lowerInput, mood);
-                UI.addBotMessage(botResponse);
-                UI.addBotMessage("Would you like me to find some music for that mood? Just say 'yes' or 'ok'!");
-                this.awaitingConfirmation = true;
-            } else {
-                UI.addBotMessage("I couldn't quite catch your mood. Could you tell me more about how you're feeling?");
-                this.awaitingConfirmation = false;
-            }
-        }
-        UI.showLoading(false);
-    },
+    let detectedMood = "neutral";
+    let confidence = 60;
 
-    detectMood(input) {
-        let bestMatch = null;
-        let bestMatchScore = 0;
+    // Check for strong keyword matches first
+    for (const [mood, words] of Object.entries(keywords)) {
+      if (words.some(word => lower.includes(word))) {
+        detectedMood = mood;
+        confidence = 90;
+        break;
+      }
+    }
 
-        for (const [mood, keywords] of Object.entries(this.moodKeywords)) {
-            // Check for exact matches first
-            const exactMatch = keywords.find(keyword => input.includes(keyword));
-            if (exactMatch) {
-                return mood; // Return immediately on exact match
-            }
+    // Use VADER compound score if no strong keyword
+    if (detectedMood === "neutral") {
+      if (compound >= 0.5) {
+        detectedMood = positive > negative ? "happy" : "excited";
+        confidence = Math.min(95, 60 + compound * 40);
+      } else if (compound <= -0.5) {
+        detectedMood = negative > positive ? "sad" : "angry";
+        confidence = Math.min(95, 60 + Math.abs(compound) * 40);
+      } else if (compound > -0.2 && compound < 0.2 && neutral > 0.7) {
+        detectedMood = "calm";
+        confidence = 80;
+      } else {
+        detectedMood = "neutral";
+        confidence = 50;
+      }
+    }
 
-            // If no exact match, calculate a score based on partial matches
-            let score = 0;
-            keywords.forEach(keyword => {
-                if (input.includes(keyword)) {
-                    score += 1;
-                }
-            });
+    return { mood: detectedMood, confidence: Math.round(confidence) };
+  },
 
-            if (score > bestMatchScore) {
-                bestMatchScore = score;
-                bestMatch = mood;
-            }
-        }
+  async processUserInput(input) {
+    UI.addUserMessage(input);
+    UI.showLoading(true);
 
-        return bestMatch; // Return the mood with the highest score, or null if no match
-    },
+    const result = this.detectMood(input);
+    const mood = result.mood;
 
-    async getGeminiResponse(input, detectedMood) {
-        try {
-            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${this.GEMINI_API_KEY}`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({
-                    contents: [{
-                        parts: [{
-                            text: `You are a music recommendation assistant. The user said: "${input}". Detected mood: ${detectedMood || 'unknown'}. Respond empathetically and suggest music vibes that match or uplift their mood. Keep it concise and friendly.`
-                        }]
-                    }]
-                }),
-            });
-            const data = await response.json();
-            return data.candidates[0].content.parts[0].text;
-        } catch (error) {
-            console.error('Error with Gemini API:', error);
-            return 'I understand you! Let me suggest some music to match your vibe.';
-        }
-    },
+    // Save to history
+    Storage.saveMood({ input, mood, timestamp: Date.now() });
+
+    // Friendly response
+    const responses = {
+      happy: "Yay! I'm so happy you're feeling great ♡ Let's celebrate with upbeat tunes!",
+      sad: "I'm here for you... Let me play something soft and comforting",
+      calm: "Ahh, peaceful vibes... Perfect time for chill melodies",
+      angry: "Whoa, I feel that energy! Let's channel it with powerful beats",
+      energetic: "Let's GOOO! Time for high-energy bangers!",
+      romantic: "Aww, feeling the love? Here's something sweet and dreamy",
+      nostalgic: "Taking a trip down memory lane? I've got the perfect throwbacks",
+      anxious: "Take a deep breath... Let me help you relax with gentle music",
+      neutral: "Hmm, mixed feelings? Let me play something uplifting!"
+    };
+
+    UI.addBotMessage(responses[mood] || "Got it! Finding music for your vibe...");
+
+    // Search Spotify for mood-based tracks
+    const tracks = await Spotify.searchTracks(mood);
+    
+    if (tracks && tracks.tracks.items.length > 0) {
+      UI.showRecommendations(tracks.tracks.items.slice(0, 10), mood);
+    } else {
+      UI.addBotMessage("Couldn't find songs right now. Try typing how you feel!");
+    }
+
+    UI.showLoading(false);
+  }
 };
