@@ -1,7 +1,18 @@
 const UI = {
     init() {
+        this.applySettingsToForm();
         this.setupEventListeners();
         this.updateMoodHistory();
+    },
+
+    applySettingsToForm() {
+        const s = Storage.getSettings();
+        const sens = document.getElementById('mood-sensitivity');
+        const disc = document.getElementById('discovery-level');
+        const save = document.getElementById('save-history');
+        if (sens) sens.value = s.moodSensitivity;
+        if (disc) disc.value = s.discoveryLevel;
+        if (save) save.checked = s.saveHistory;
     },
 
     setupEventListeners() {
@@ -9,12 +20,19 @@ const UI = {
             item.addEventListener('click', () => this.switchSection(item.dataset.section));
         });
 
-        document.getElementById('send-button').addEventListener('click', () => {
-            const input = document.getElementById('user-input').value.trim();
+        const sendInput = () => {
+            const inputEl = document.getElementById('user-input');
+            const input = inputEl.value.trim();
             if (input) {
-                UI.addUserMessage(input);
                 Chatbot.processUserInput(input);
-                document.getElementById('user-input').value = '';
+                inputEl.value = '';
+            }
+        };
+        document.getElementById('send-button').addEventListener('click', sendInput);
+        document.getElementById('user-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendInput();
             }
         });
 
@@ -40,8 +58,46 @@ const UI = {
         });
 
         document.getElementById('clear-history').addEventListener('click', () => {
-            Storage.clearMoodHistory();
-            this.updateMoodHistory();
+            if (confirm('Clear all mood history?')) {
+                Storage.clearMoodHistory();
+                this.updateMoodHistory();
+            }
+        });
+
+        document.getElementById('export-data').addEventListener('click', () => {
+            const payload = {
+                user: Storage.getUserData(),
+                moodHistory: Storage.getMoodHistory(),
+                settings: Storage.getSettings(),
+                exportedAt: new Date().toISOString(),
+            };
+            const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `moodmelody-export-${Date.now()}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        });
+
+        document.getElementById('spotify-disconnect').addEventListener('click', () => {
+            Storage.clearTokens();
+            Storage.clearUserData();
+            document.getElementById('spotify-connect').style.display = '';
+            document.getElementById('spotify-disconnect').style.display = 'none';
+            document.querySelector('.user-name').textContent = 'Sign In';
+            UI.updateTrackInfo(null);
+            UI.addBotMessage('Spotify disconnected.');
+        });
+
+        document.getElementById('mood-sensitivity').addEventListener('change', (e) => {
+            Storage.saveSettings({ moodSensitivity: e.target.value });
+        });
+        document.getElementById('discovery-level').addEventListener('change', (e) => {
+            Storage.saveSettings({ discoveryLevel: e.target.value });
+        });
+        document.getElementById('save-history').addEventListener('change', (e) => {
+            Storage.saveSettings({ saveHistory: e.target.checked });
         });
 
         document.getElementById('play-all-recommendations').addEventListener('click', () => {
@@ -136,51 +192,53 @@ const UI = {
     },
 
     async updateLibrary() {
+        const playlistGrid = document.getElementById('user-playlists');
         const tokens = Storage.getTokens();
-        if (tokens && tokens.access_token) {
-            const playlists = await Spotify.getPlaylists(tokens.access_token);
-            const playlistGrid = document.getElementById('user-playlists');
-            playlistGrid.innerHTML = '';
-            if (playlists && playlists.items) {
-                playlists.items.forEach(playlist => {
-                    const div = document.createElement('div');
-                    div.className = 'playlist-item';
-                    div.innerHTML = `
-                        <h4>${playlist.name}</h4>
-                        <img src="${playlist.images[0]?.url || 'assets/images/placeholder.png'}" alt="${playlist.name}">
-                        <button class="btn btn-sm btn-primary play-playlist" data-playlist-id="${playlist.id}">Play</button>
-                    `;
-                    playlistGrid.appendChild(div);
-
-                    div.querySelector('.play-playlist').addEventListener('click', async () => {
-                        const tracks = await Spotify.getPlaylistTracks(tokens.access_token, playlist.id);
-                        if (tracks && tracks.items && tracks.items.length > 0) {
-                            const firstTrackUri = tracks.items[0].track.uri;
-                            Spotify.playTrack(firstTrackUri).then(() => {
-                                UI.updateTrackInfo(tracks.items[0].track);
-                            }).catch(err => {
-                                console.error('Error playing playlist:', err);
-                                UI.addBotMessage('Failed to play the playlist. Please try again.');
-                            });
-                        } else {
-                            UI.addBotMessage('No tracks found in this playlist.');
-                        }
-                    });
-                });
-            } else {
-                playlistGrid.innerHTML = '<div class="playlist-placeholder">No playlists found</div>';
-            }
-        } else {
+        if (!tokens || !tokens.access_token) {
             playlistGrid.innerHTML = '<div class="playlist-placeholder">Connect with Spotify to see your playlists</div>';
+            return;
         }
+        const playlists = await Spotify.getPlaylists(tokens.access_token);
+        playlistGrid.innerHTML = '';
+        if (!playlists || !playlists.items || playlists.items.length === 0) {
+            playlistGrid.innerHTML = '<div class="playlist-placeholder">No playlists found</div>';
+            return;
+        }
+        playlists.items.forEach(playlist => {
+            const div = document.createElement('div');
+            div.className = 'playlist-item';
+            div.innerHTML = `
+                <h4>${playlist.name}</h4>
+                <img src="${playlist.images[0]?.url || 'assets/images/placeholder.png'}" alt="${playlist.name}">
+                <button class="btn btn-sm btn-primary play-playlist" data-playlist-id="${playlist.id}">Play</button>
+            `;
+            playlistGrid.appendChild(div);
+
+            div.querySelector('.play-playlist').addEventListener('click', async () => {
+                const tracks = await Spotify.getPlaylistTracks(tokens.access_token, playlist.id);
+                if (tracks && tracks.items && tracks.items.length > 0) {
+                    const firstTrackUri = tracks.items[0].track.uri;
+                    Spotify.playTrack(firstTrackUri).then(() => {
+                        UI.updateTrackInfo(tracks.items[0].track);
+                    }).catch(err => {
+                        console.error('Error playing playlist:', err);
+                        UI.addBotMessage('Failed to play the playlist. Please try again.');
+                    });
+                } else {
+                    UI.addBotMessage('No tracks found in this playlist.');
+                }
+            });
+        });
     },
+
+    moodChart: null,
 
     updateMoodHistory() {
         const history = Storage.getMoodHistory();
         const historyList = document.getElementById('mood-history-entries');
         historyList.innerHTML = '';
         if (history.length > 0) {
-            history.forEach(entry => {
+            [...history].reverse().forEach(entry => {
                 const div = document.createElement('div');
                 div.className = 'history-entry';
                 div.innerHTML = `<p><strong>${new Date(entry.timestamp).toLocaleString()}</strong>: ${entry.mood}<br>${entry.input}</p>`;
@@ -189,6 +247,45 @@ const UI = {
         } else {
             historyList.innerHTML = '<div class="history-placeholder">Your mood history will appear here as you use the app</div>';
         }
+        this.renderMoodChart(history);
+    },
+
+    renderMoodChart(history) {
+        const canvas = document.getElementById('mood-chart');
+        if (!canvas || typeof Chart === 'undefined') return;
+
+        const counts = history.reduce((acc, entry) => {
+            acc[entry.mood] = (acc[entry.mood] || 0) + 1;
+            return acc;
+        }, {});
+        const labels = Object.keys(counts);
+        const data = Object.values(counts);
+        const palette = ['#ff9a9e', '#a8edea', '#fed6e3', '#c8a2c8', '#a8bde8', '#ffd6a5', '#bde0fe', '#cdb4db', '#ffc8dd', '#b5ead7'];
+
+        if (this.moodChart) this.moodChart.destroy();
+
+        if (labels.length === 0) {
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            return;
+        }
+
+        this.moodChart = new Chart(canvas, {
+            type: 'doughnut',
+            data: {
+                labels,
+                datasets: [{
+                    data,
+                    backgroundColor: labels.map((_, i) => palette[i % palette.length]),
+                    borderWidth: 0,
+                }],
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: { legend: { position: 'right' } },
+            },
+        });
     },
 
     showRecommendations(tracks, mood) {

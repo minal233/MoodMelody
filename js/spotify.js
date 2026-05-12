@@ -129,7 +129,7 @@ const Spotify = {
 
     async refreshAccessToken() {
         const tokens = Storage.getTokens();
-        if (!tokens.refresh_token) {
+        if (!tokens || !tokens.refresh_token) {
             console.error('No refresh token available');
             return null;
         }
@@ -157,7 +157,10 @@ const Spotify = {
 
     async getValidAccessToken() {
         const tokens = Storage.getTokens();
-        if (Date.now() > this.tokenExpirationTime) {
+        if (!tokens || !tokens.access_token) {
+            return null;
+        }
+        if (this.tokenExpirationTime && Date.now() > this.tokenExpirationTime) {
             console.log('Access token expired, refreshing...');
             const newAccessToken = await this.refreshAccessToken();
             return newAccessToken || tokens.access_token;
@@ -233,7 +236,12 @@ const Spotify = {
         }
     },
 
-    async searchTracks(access_token, query, mood) {
+    async searchTracks(mood) {
+        const access_token = await this.getValidAccessToken();
+        if (!access_token) {
+            console.error('No access token available for search');
+            return null;
+        }
         const moodGenres = {
             happy: ['pop', 'dance', 'upbeat'],
             sad: ['acoustic', 'indie', 'ballad'],
@@ -293,7 +301,7 @@ const Spotify = {
             }
             console.log('Playback started successfully');
             this.isPlaying = true;
-            this.updatePlayerState('playing');
+            UI.updatePlayerState('playing');
             return Promise.resolve();
         } catch (error) {
             console.error('Error playing track:', error.message);
@@ -302,29 +310,29 @@ const Spotify = {
     },
 
     async togglePlayPause() {
-        if (this.player) {
-            this.player.togglePlay().then(() => {
-                this.player.getCurrentState().then(state => {
-                    if (state) {
-                        this.isPlaying = !state.paused;
-                        this.updatePlayerState(this.isPlaying ? 'playing' : 'paused');
-                        if (this.isPlaying) {
-                            this.startProgressUpdate();
-                        } else {
-                            this.stopProgressUpdate();
-                        }
+        if (!this.player) {
+            console.error('Player not initialized');
+            return;
+        }
+        this.player.togglePlay().then(() => {
+            this.player.getCurrentState().then(state => {
+                if (state) {
+                    this.isPlaying = !state.paused;
+                    UI.updatePlayerState(this.isPlaying ? 'playing' : 'paused');
+                    if (this.isPlaying) {
+                        this.startProgressUpdate();
                     } else {
-                        this.isPlaying = false;
-                        this.updatePlayerState('paused');
                         this.stopProgressUpdate();
                     }
-                });
-            }).catch(err => {
-                console.error('Error toggling play/pause:', err);
+                } else {
+                    this.isPlaying = false;
+                    UI.updatePlayerState('paused');
+                    this.stopProgressUpdate();
+                }
             });
-        } else {
-            console.error('Player not initialized');
-        }
+        }).catch(err => {
+            console.error('Error toggling play/pause:', err);
+        });
     },
 
     async nextTrack() {
@@ -381,7 +389,4 @@ const Spotify = {
         }
     },
 
-    updatePlayerState(state) {
-        UI.updatePlayerState(state);
-    },
 };

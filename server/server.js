@@ -46,10 +46,10 @@ app.get('/api/auth/spotify/callback', async (req, res) => {
         });
 
         const { access_token, refresh_token, expires_in } = response.data;
-        res.redirect(`http://127.0.0.1:8000/?access_token=${access_token}&refresh_token=${refresh_token}&expires_in=${expires_in}`);
+        res.redirect(`http://127.0.0.1:${PORT}/?access_token=${access_token}&refresh_token=${refresh_token}&expires_in=${expires_in}`);
     } catch (error) {
         console.error('Error in callback:', error.response ? error.response.data : error.message);
-        res.redirect('http://127.0.0.1:8000/?error=auth_failed');
+        res.redirect(`http://127.0.0.1:${PORT}/?error=auth_failed`);
     }
 });
 

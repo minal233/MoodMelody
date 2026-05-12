@@ -1,9 +1,10 @@
 // js/chatbot.js
 const Chatbot = {
   // Enhanced mood detection using VADER + keyword boosting
+  currentMood: null,
+
   detectMood(text) {
-    const analyzer = new vader.SentimentIntensityAnalyzer();
-    const scores = analyzer.polarity_scores(text.toLowerCase());
+    const scores = vaderSentiment.SentimentIntensityAnalyzer.polarity_scores(text.toLowerCase());
 
     const compound = scores.compound; // -1 (very negative) to +1 (very positive)
     const positive = scores.pos;
@@ -61,9 +62,9 @@ const Chatbot = {
 
     const result = this.detectMood(input);
     const mood = result.mood;
+    this.currentMood = mood;
 
-    // Save to history
-    Storage.saveMood({ input, mood, timestamp: Date.now() });
+    Storage.saveMoodHistory({ input, mood, confidence: result.confidence, timestamp: Date.now() });
 
     // Friendly response
     const responses = {
@@ -80,10 +81,16 @@ const Chatbot = {
 
     UI.addBotMessage(responses[mood] || "Got it! Finding music for your vibe...");
 
-    // Search Spotify for mood-based tracks
+    const tokens = Storage.getTokens();
+    if (!tokens || !tokens.access_token) {
+      UI.addBotMessage("Connect Spotify in Settings to get music recommendations for your mood.");
+      UI.showLoading(false);
+      return;
+    }
+
     const tracks = await Spotify.searchTracks(mood);
-    
-    if (tracks && tracks.tracks.items.length > 0) {
+
+    if (tracks && tracks.tracks && tracks.tracks.items.length > 0) {
       UI.showRecommendations(tracks.tracks.items.slice(0, 10), mood);
     } else {
       UI.addBotMessage("Couldn't find songs right now. Try typing how you feel!");
